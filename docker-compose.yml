@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: taskweave
+      POSTGRES_USER: taskweave
+      POSTGRES_PASSWORD: taskweave_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskweave"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # TaskWeave AI Backend
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=dev
+      - DATABASE_URL=postgresql://taskweave:taskweave_password@postgres:5432/taskweave
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your_super_secret_key_change_in_production_32_chars_minimum
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TTL_MIN=30
+      - JWT_REFRESH_TTL_MIN=43200
+      - WEB_BASE_URL=http://localhost:5000
+      - API_BASE_URL=http://localhost:8000
+      - ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:5000"]
+      - ALLOWED_HOSTS=["localhost","127.0.0.1","*"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Background Workers
+  worker:
+    build: .
+    environment:
+      - APP_ENV=dev
+      - DATABASE_URL=postgresql://taskweave:taskweave_password@postgres:5432/taskweave
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your_super_secret_key_change_in_production_32_chars_minimum
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python -c "
+      import asyncio
+      from workers.task_processor import TaskProcessor
+      from workers.report_generator import ReportWorker
+      from workers.automation_engine import AutomationEngine
+
+      async def run_workers():
+          task_processor = TaskProcessor()
+          report_worker = ReportWorker()
+          automation_engine = AutomationEngine()
+          
+          await asyncio.gather(
+              task_processor.run_continuous(interval=60),
+              report_worker.run_scheduler(),
+              automation_engine.run_continuous(interval=120)
+          )
+      
+      asyncio.run(run_workers())
+      "
+
+  # Frontend (Optional - Simple Swagger UI)
+  frontend:
+    image: swaggerapi/swagger-ui
+    ports:
+      - "5000:8080"
+    environment:
+      - SWAGGER_JSON_URL=http://localhost:8000/openapi.json
+      - API_URL=http://localhost:8000/openapi.json
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: taskweave_network

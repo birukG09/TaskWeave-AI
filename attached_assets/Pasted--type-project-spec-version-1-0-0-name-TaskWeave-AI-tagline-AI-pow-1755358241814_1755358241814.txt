@@ -1,0 +1,579 @@
+{
+  "type": "project_spec",
+  "version": "1.0.0",
+  "name": "TaskWeave AI",
+  "tagline": "AI-powered task automation & orchestration platform for small remote teams",
+  "owner": "bura",
+  "goals": [
+    "Aggregate signals from Slack, GitHub, Gmail, Trello, Notion, Google Drive.",
+    "Use LLMs to summarize, prioritize, and generate actionable tasks.",
+    "Offer rule-based automations to trigger cross-app actions.",
+    "Deliver daily/weekly AI summaries, progress reports, and alerts.",
+    "Provide a secure, production-grade backend with CI/CD and AWS deployment."
+  ],
+  "constraints": {
+    "timeline": "MVP within 6-8 weeks, production-ready in 12 weeks",
+    "budget": "Bootstrap-friendly; optimize for managed cloud",
+    "remote_friendly": true
+  },
+  "personas": [
+    {
+      "id": "founder_pm",
+      "role": "Founder/PM",
+      "needs": ["high-level summaries", "auto-prioritized backlog", "status reports"],
+      "success": ["less time in tools", "clear weekly progress"]
+    },
+    {
+      "id": "engineer",
+      "role": "Backend/Full-stack dev",
+      "needs": ["low-friction API", "clear logs/observability", "webhooks"],
+      "success": ["stable integrations", "fast deployments"]
+    }
+  ],
+  "north_star_metrics": [
+    "time_saved_per_user_week",
+    "tasks_auto_created_per_week",
+    "report_open_rate"
+  ],
+  "non_functional_requirements": {
+    "availability": "99.5%+",
+    "latency_p50_ms": 200,
+    "latency_p95_ms": 800,
+    "throughput": "1k events/min burst",
+    "scalability": "horizontal for API, workers",
+    "security": "OWASP ASVS L2, JWT/OAuth2, secrets rotation",
+    "privacy": "PII minimization, data retention policies",
+    "compliance_ready": ["SOC2-friendly architecture", "GDPR-ready data export/delete"]
+  },
+  "tech_stack": {
+    "backend": {
+      "language": "python",
+      "framework": "fastapi",
+      "runtime": "python 3.11",
+      "key_libs": ["pydantic", "sqlalchemy", "alembic", "httpx", "python-jose", "passlib", "redis", "boto3", "tenacity", "structlog"]
+    },
+    "ai": {
+      "llm_providers": ["openai", "anthropic", "local_ollama_optional"],
+      "orchestration": "LangChain (lightweight) or hand-rolled pipelines",
+      "prompt_patterns": ["task_extraction", "priority_scoring", "daily_digest", "weekly_report"]
+    },
+    "db": {
+      "primary": "postgresql 15",
+      "cache": "redis 7",
+      "search_optional": "pg_trgm or OpenSearch (later)"
+    },
+    "queue": "redis streams or rq",
+    "infra": {
+      "container": "docker",
+      "orchestration": "aws ecs/fargate",
+      "storage": "aws s3",
+      "dns_tls": "route53 + acm",
+      "metrics_logs": "cloudwatch + opentelemetry"
+    },
+    "ci_cd": "github actions",
+    "frontend": {
+      "option": "react + vite + tailwind",
+      "alt": "API-first, Swagger UI for MVP"
+    }
+  },
+  "repository_structure": {
+    "root": [
+      "README.md",
+      "LICENSE",
+      "Makefile",
+      "docker-compose.yml",
+      "infra/ (terraform optional)",
+      "backend/",
+      "frontend/ (optional)",
+      ".github/workflows/",
+      "scripts/",
+      "docs/"
+    ],
+    "backend": [
+      "app/main.py",
+      "app/config.py",
+      "app/deps.py",
+      "app/auth/",
+      "app/models/",
+      "app/schemas/",
+      "app/api/v1/",
+      "app/services/",
+      "app/integrations/",
+      "app/workers/",
+      "app/ai/",
+      "alembic/"
+    ]
+  },
+  "env_config": {
+    "required": [
+      "APP_ENV",
+      "SECRET_KEY",
+      "DATABASE_URL",
+      "REDIS_URL",
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "JWT_ALGORITHM",
+      "JWT_ACCESS_TTL_MIN",
+      "JWT_REFRESH_TTL_MIN",
+      "AWS_REGION",
+      "AWS_S3_BUCKET",
+      "SMTP_HOST",
+      "SMTP_PORT",
+      "SMTP_USER",
+      "SMTP_PASS",
+      "OAUTH_GOOGLE_CLIENT_ID",
+      "OAUTH_GOOGLE_CLIENT_SECRET",
+      "OAUTH_GITHUB_CLIENT_ID",
+      "OAUTH_GITHUB_CLIENT_SECRET",
+      "SLACK_CLIENT_ID",
+      "SLACK_CLIENT_SECRET",
+      "TRELLO_KEY",
+      "TRELLO_TOKEN",
+      "NOTION_SECRET",
+      "GMAIL_CLIENT_ID",
+      "GMAIL_CLIENT_SECRET",
+      "WEB_BASE_URL",
+      "API_BASE_URL"
+    ],
+    "defaults": {
+      "APP_ENV": "dev",
+      "JWT_ALGORITHM": "HS256",
+      "JWT_ACCESS_TTL_MIN": "30",
+      "JWT_REFRESH_TTL_MIN": "43200"
+    }
+  },
+  "data_model": {
+    "tables": [
+      {
+        "name": "users",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "email": "text unique not null",
+          "password_hash": "text",
+          "name": "text",
+          "role": "text check (role in ('owner','admin','member')) default 'member'",
+          "created_at": "timestamptz default now()",
+          "updated_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_users_email"]
+      },
+      {
+        "name": "organizations",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "name": "text not null",
+          "owner_id": "uuid references users(id)",
+          "plan": "text default 'free'",
+          "created_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_orgs_owner"]
+      },
+      {
+        "name": "memberships",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "user_id": "uuid references users(id) on delete cascade",
+          "role": "text default 'member'",
+          "created_at": "timestamptz default now()"
+        },
+        "uniques": ["uniq_org_user"]
+      },
+      {
+        "name": "projects",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "name": "text not null",
+          "description": "text",
+          "created_by": "uuid references users(id)",
+          "created_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_projects_org"]
+      },
+      {
+        "name": "integrations",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "provider": "text check (provider in ('slack','github','gmail','trello','notion','gdrive'))",
+          "oauth_access_token": "text",
+          "oauth_refresh_token": "text",
+          "metadata": "jsonb",
+          "created_at": "timestamptz default now()",
+          "updated_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_integrations_org_provider"]
+      },
+      {
+        "name": "events",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "provider": "text",
+          "external_id": "text",
+          "event_type": "text",
+          "payload": "jsonb",
+          "ingested_at": "timestamptz default now()",
+          "processed": "boolean default false"
+        },
+        "indexes": ["idx_events_org_provider", "idx_events_processed"]
+      },
+      {
+        "name": "tasks",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "project_id": "uuid references projects(id) on delete set null",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "title": "text not null",
+          "description": "text",
+          "source": "text",
+          "priority": "int check (priority between 1 and 5) default 3",
+          "status": "text check (status in ('todo','in_progress','done','blocked')) default 'todo'",
+          "assignee_id": "uuid references users(id)",
+          "due_date": "timestamptz",
+          "labels": "text[]",
+          "created_at": "timestamptz default now()",
+          "updated_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_tasks_org", "idx_tasks_project", "idx_tasks_status_priority"]
+      },
+      {
+        "name": "automations",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "name": "text not null",
+          "trigger": "jsonb",
+          "conditions": "jsonb",
+          "actions": "jsonb",
+          "enabled": "boolean default true",
+          "created_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_automations_org_enabled"]
+      },
+      {
+        "name": "reports",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "type": "text check (type in ('daily','weekly'))",
+          "content": "jsonb",
+          "generated_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_reports_org_type"]
+      },
+      {
+        "name": "webhooks",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "url": "text not null",
+          "secret": "text not null",
+          "events": "text[]",
+          "active": "boolean default true",
+          "created_at": "timestamptz default now()"
+        }
+      },
+      {
+        "name": "audit_logs",
+        "pk": "id",
+        "columns": {
+          "id": "uuid",
+          "org_id": "uuid references organizations(id) on delete cascade",
+          "actor_user_id": "uuid references users(id)",
+          "action": "text",
+          "entity": "text",
+          "entity_id": "uuid",
+          "meta": "jsonb",
+          "created_at": "timestamptz default now()"
+        },
+        "indexes": ["idx_audit_org_created"]
+      }
+    ]
+  },
+  "api_spec": {
+    "version": "v1",
+    "auth": {
+      "jwt": {
+        "routes": [
+          {"method": "POST", "path": "/auth/register", "body": {"email": "string", "password": "string", "name": "string"}},
+          {"method": "POST", "path": "/auth/login", "body": {"email": "string", "password": "string"}},
+          {"method": "POST", "path": "/auth/refresh"},
+          {"method": "POST", "path": "/auth/logout"}
+        ]
+      },
+      "oauth": {
+        "providers": ["google", "github", "slack"],
+        "routes": [
+          {"method": "GET", "path": "/oauth/{provider}/authorize"},
+          {"method": "GET", "path": "/oauth/{provider}/callback"}
+        ]
+      }
+    },
+    "resources": [
+      {"method": "GET", "path": "/me"},
+      {"method": "GET", "path": "/orgs"},
+      {"method": "POST", "path": "/orgs", "body": {"name": "string"}},
+      {"method": "POST", "path": "/orgs/{org_id}/members", "body": {"email": "string", "role": "string"}},
+      {"method": "GET", "path": "/orgs/{org_id}/projects"},
+      {"method": "POST", "path": "/orgs/{org_id}/projects", "body": {"name": "string", "description": "string"}},
+      {"method": "GET", "path": "/orgs/{org_id}/integrations"},
+      {"method": "POST", "path": "/orgs/{org_id}/integrations/{provider}/connect"},
+      {"method": "DELETE", "path": "/orgs/{org_id}/integrations/{provider}"},
+      {"method": "POST", "path": "/orgs/{org_id}/events/ingest", "body": {"provider": "string", "payload": "object"}},
+      {"method": "GET", "path": "/orgs/{org_id}/tasks"},
+      {"method": "POST", "path": "/orgs/{org_id}/tasks", "body": {"title": "string", "description": "string", "project_id": "uuid", "assignee_id": "uuid", "priority": "int", "labels": ["string"]}},
+      {"method": "PATCH", "path": "/orgs/{org_id}/tasks/{task_id}", "body": {"status": "string", "priority": "int", "assignee_id": "uuid", "due_date": "timestamp"}},
+      {"method": "POST", "path": "/orgs/{org_id}/automations", "body": {"name": "string", "trigger": "object", "conditions": "object", "actions": "object"}},
+      {"method": "GET", "path": "/orgs/{org_id}/automations"},
+      {"method": "POST", "path": "/orgs/{org_id}/reports/generate", "body": {"type": "daily|weekly"}},
+      {"method": "GET", "path": "/orgs/{org_id}/reports/latest?type=daily"},
+      {"method": "POST", "path": "/orgs/{org_id}/webhooks", "body": {"url": "string", "events": ["string"]}},
+      {"method": "POST", "path": "/orgs/{org_id}/webhooks/test", "body": {"event": "string"}},
+      {"method": "GET", "path": "/healthz"},
+      {"method": "GET", "path": "/metrics"}
+    ],
+    "error_model": {"code": "string", "message": "string", "detail": "object"}
+  },
+  "ai_orchestration": {
+    "pipelines": [
+      {
+        "name": "task_extraction",
+        "input": {"event_payload": "object"},
+        "prompt_template": "You are an assistant that extracts actionable tasks from the following content. Return JSON with fields: title, description, priority(1-5), suggested_assignee(email optional), source.",
+        "output_schema": {"title": "string", "description": "string", "priority": "int", "suggested_assignee": "string|null", "source": "string"},
+        "post_processing": ["json_schema_validate", "priority_clip_1_5", "assignee_lookup"]
+      },
+      {
+        "name": "priority_scoring",
+        "input": {"task": "object", "org_context": "object"},
+        "prompt_template": "Given org context and task, compute importance (1-5) and urgency (1-5). Return JSON {importance, urgency, notes}.",
+        "output_schema": {"importance": "int", "urgency": "int", "notes": "string"},
+        "post_processing": ["weighted_score = 0.6*urgency + 0.4*importance"]
+      },
+      {
+        "name": "daily_digest",
+        "input": {"org_id": "uuid", "since": "timestamp"},
+        "prompt_template": "Summarize key team activity in max 10 bullets. Include completed tasks, blockers, PRs merged, and upcoming deadlines.",
+        "output_schema": {"markdown": "string"},
+        "delivery": ["email", "slack"]
+      },
+      {
+        "name": "weekly_report",
+        "input": {"org_id": "uuid", "range": "timestamp_range"},
+        "prompt_template": "Create a concise weekly progress report with sections: Highlights, Risks, Blockers, Next Week Plan.",
+        "output_schema": {"markdown": "string"},
+        "delivery": ["email", "pdf_optional"]
+      }
+    ],
+    "guardrails": {
+      "max_tokens": 1200,
+      "temperature": 0.2,
+      "rate_limits_per_org_per_min": 10,
+      "tool_use": ["retrieval_from_pg", "http_actions"],
+      "safety": ["PII_redaction_in_prompts", "provider_timeouts", "retry_with_backoff"]
+    }
+  },
+  "integrations_spec": {
+    "slack": {
+      "events": ["message.channels", "reaction_added"],
+      "actions": ["post_message", "dm_user", "create_thread_reply"]
+    },
+    "github": {
+      "events": ["pull_request", "issues", "push"],
+      "actions": ["create_issue_comment", "open_issue", "close_issue"]
+    },
+    "gmail": {
+      "events": ["new_email"],
+      "actions": ["send_email", "label_email"]
+    },
+    "trello": {
+      "events": ["card_created", "card_moved"],
+      "actions": ["create_card", "move_card", "add_comment"]
+    },
+    "notion": {
+      "events": ["page_updated"],
+      "actions": ["create_page", "update_page"]
+    },
+    "gdrive": {
+      "events": ["file_created", "file_updated"],
+      "actions": ["create_file", "share_file"]
+    }
+  },
+  "automation_engine": {
+    "trigger_model": {
+      "provider_event": {
+        "fields": ["provider", "event_type", "filters(optional)"]
+      },
+      "schedule": {
+        "fields": ["cron", "timezone"]
+      },
+      "manual": {
+        "fields": []
+      }
+    },
+    "condition_model": {
+      "comparators": ["eq", "neq", "contains", "regex", "gt", "lt"],
+      "fields": ["event.payload.path", "task.priority", "task.status", "text_match"]
+    },
+    "action_model": {
+      "types": ["create_task", "update_task", "notify_slack", "send_email", "call_webhook", "create_trello_card", "notion_page"],
+      "retries": {"max": 3, "backoff_seconds": 5}
+    }
+  },
+  "security": {
+    "auth": "JWT access/refresh, per-org RBAC (owner, admin, member)",
+    "passwords": "argon2 or bcrypt via passlib",
+    "tokens": "rotate refresh, revoke on logout",
+    "oauth2": "PKCE for public clients",
+    "secrets": "AWS Secrets Manager or SSM Parameter Store",
+    "headers": ["CSP", "HSTS", "X-Content-Type-Options", "X-Frame-Options"],
+    "webhooks": "HMAC-SHA256 signature with replay protection",
+    "rate_limits": {
+      "ip_per_min": 120,
+      "org_per_min": 600
+    },
+    "audit": "persist all admin actions",
+    "data_retention": {
+      "events_days": 90,
+      "reports_days": 365
+    }
+  },
+  "observability": {
+    "logging": "structured json logs (structlog)",
+    "tracing": "opentelemetry",
+    "metrics": ["request_count", "latency_ms", "queue_depth", "task_created", "llm_calls"]
+  },
+  "ci_cd": {
+    "github_actions": {
+      "workflows": [
+        {
+          "name": "backend-ci",
+          "on": ["push", "pull_request"],
+          "steps": ["setup-python", "install-poetry", "lint-ruff", "typecheck-mypy", "pytest", "build-docker"]
+        },
+        {
+          "name": "deploy-ecs",
+          "on": ["push: tags: v*"],
+          "steps": ["login-aws", "build-and-push-ecr", "update-ecs-service"]
+        }
+      ]
+    }
+  },
+  "testing": {
+    "levels": ["unit", "integration", "e2e"],
+    "coverage_target": 0.75,
+    "fixtures": ["sample_events_slack.json", "sample_pr_merged.json", "sample_emails.json"],
+    "security_tests": ["jwt_tamper", "rate_limit", "sql_injection", "ssrf_block"]
+  },
+  "sample_data": {
+    "org": {"name": "Acme Remote"},
+    "users": [
+      {"email": "alice@acme.test", "name": "Alice Owner", "role": "owner"},
+      {"email": "bob@acme.test", "name": "Bob Dev", "role": "member"}
+    ],
+    "projects": [{"name": "Acme App", "description": "Core product work"}]
+  },
+  "ux_requirements": {
+    "dashboard": [
+      "inbox of recent events with AI summaries",
+      "task list with priority/urgency",
+      "automation builder (trigger → conditions → actions) with preview",
+      "reports viewer (daily, weekly)"
+    ],
+    "accessibility": "WCAG 2.1 AA"
+  },
+  "acceptance_criteria": [
+    "Able to connect at least Slack + GitHub via OAuth and ingest events.",
+    "Events create suggested tasks via LLM with priority.",
+    "User can accept/edit suggested tasks; tasks persist and are searchable.",
+    "Automation rule can post to Slack when GitHub PR merged.",
+    "Daily digest email is generated and delivered to org members.",
+    "All APIs documented via OpenAPI/Swagger and protected by JWT.",
+    "One-click deploy to AWS ECS via GitHub Actions succeeds."
+  ],
+  "developer_tasks": [
+    {"id": "T1", "title": "Project bootstrap (FastAPI, Alembic, Docker, Poetry)", "owner": "backend"},
+    {"id": "T2", "title": "Auth service (JWT, refresh, RBAC)", "owner": "backend"},
+    {"id": "T3", "title": "Postgres schema + migrations", "owner": "backend"},
+    {"id": "T4", "title": "Integrations framework abstraction", "owner": "backend"},
+    {"id": "T5", "title": "Slack OAuth + event receiver", "owner": "backend"},
+    {"id": "T6", "title": "GitHub OAuth + webhook receiver", "owner": "backend"},
+    {"id": "T7", "title": "Event ingestion → Queue → Worker", "owner": "backend"},
+    {"id": "T8", "title": "AI pipelines (task_extraction, priority_scoring)", "owner": "ai"},
+    {"id": "T9", "title": "Tasks API CRUD + filters", "owner": "backend"},
+    {"id": "T10", "title": "Automation engine MVP", "owner": "backend"},
+    {"id": "T11", "title": "Reports generation (daily/weekly)", "owner": "ai"},
+    {"id": "T12", "title": "Email/Slack delivery service", "owner": "backend"},
+    {"id": "T13", "title": "Observability (logs, metrics, healthz)", "owner": "platform"},
+    {"id": "T14", "title": "CI (lint, typecheck, tests) + CD to ECS", "owner": "platform"},
+    {"id": "T15", "title": "Docs: README, API, env, runbook", "owner": "docs"}
+  ],
+  "deliverables": {
+    "code": [
+      "Backend FastAPI service with workers",
+      "Optional React dashboard",
+      "Terraform or AWS console runbook",
+      "Dockerfiles and docker-compose for local dev"
+    ],
+    "docs": [
+      "README with architecture diagram (ASCII ok)",
+      "API reference (Swagger/OpenAPI JSON)",
+      "ENV setup guide",
+      "On-call runbook: queues, retries, rate limits",
+      "Security notes: keys, OAuth scopes, webhooks"
+    ],
+    "pipelines": ["GitHub Actions CI", "Deploy to ECS Fargate", "ECR images"],
+    "artifacts": ["OpenAPI spec file", "Sample events", "Seed script"]
+  },
+  "pricing_model": {
+    "free": {"users": 3, "rate_limit_events_per_month": 2000},
+    "pro": {"price_usd_month": 15, "users": 10, "events": 25000},
+    "team": {"price_usd_month": 49, "users": 30, "events": 100000}
+  },
+  "roadmap": [
+    {"q": "Q1", "items": ["MVP integrations: Slack, GitHub, Gmail", "Automation builder v1", "Daily/weekly reports"]},
+    {"q": "Q2", "items": ["Trello, Notion, GDrive integrations", "Granular RBAC", "Org-level analytics"]},
+    {"q": "Q3", "items": ["Bring-your-own-LLM", "On-prem event proxy", "Mobile-friendly dashboard"]},
+    {"q": "Q4", "items": ["Marketplace for recipes", "SLA/Enterprise plan", "SOC2 readiness"]}
+  ],
+  "runbooks": {
+    "local_dev": {
+      "commands": [
+        "make dev.up",
+        "alembic upgrade head",
+        "uvicorn app.main:app --reload"
+      ],
+      "urls": [
+        "http://localhost:8000/docs",
+        "http://localhost:8000/healthz"
+      ]
+    },
+    "prod_deploy": {
+      "steps": [
+        "Build & push Docker image to ECR",
+        "Run DB migrations",
+        "Update ECS service",
+        "Smoke test /healthz and /metrics"
+      ]
+    }
+  },
+  "success_criteria": [
+    "End-to-end demo: PR merged on GitHub → Slack notification → AI task created → Included in daily digest.",
+    "p95 API latency < 800ms at 100 RPS.",
+    "Zero critical vulnerabilities in dependency scan."
+  ],
+  "license": "MIT",
+  "notes": "Replace placeholder env secrets before deploy. To switch LLM providers, use a provider-agnostic interface in app/ai/providers."
+}
